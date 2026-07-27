@@ -2,24 +2,22 @@ from aiogram import Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
-from database import async_session, User, UserFilter
+from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
+from database import async_session, User, UserFilter, get_orders_for_user
 from sqlalchemy import select
-from database import get_orders_for_user
 import re
 
 router = Router()
 
-# Определяем состояния
+# Состояния для пошагового ввода фильтров
 class FilterForm(StatesGroup):
     origin_countries = State()
     dest_countries = State()
     max_weight = State()
-    max_volume = State()
     max_pallets = State()
     min_price = State()
 
-# Создаём клавиатуру с кнопками "Пропустить" и "Отмена"
+# Клавиатура с кнопками "Пропустить" и "Отмена"
 skip_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⏩ Пропустить")],
@@ -28,6 +26,17 @@ skip_kb = ReplyKeyboardMarkup(
     resize_keyboard=True,
     one_time_keyboard=True
 )
+
+# ---------- Главное меню (Inline-кнопки) ----------
+def get_main_menu():
+    buttons = [
+        [InlineKeyboardButton(text="🔧 Настроить фильтры", callback_data="menu_set_filter")],
+        [InlineKeyboardButton(text="📋 Показать фильтры", callback_data="menu_view_filter")],
+        [InlineKeyboardButton(text="🔄 Сбросить фильтры", callback_data="menu_reset_filter")],
+        [InlineKeyboardButton(text="📜 История заказов", callback_data="menu_history")],
+        [InlineKeyboardButton(text="ℹ️ Статус", callback_data="menu_status")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 # ---------- /start ----------
 @router.message(Command("start"))
@@ -40,14 +49,29 @@ async def cmd_start(message: Message):
             await session.commit()
     await message.answer(
         "🚚 Привет! Я буду присылать мистеру котичке заказы.\n"
-        "Используй /set_filter, чтобы настроить параметры поиска.\n"
-        "Используй /view_filter, чтобы посмотреть текущие настройки.\n"
-        "Используй /reset_filter, чтобы сбросить все фильтры.\n"
-        "Используй /history [дни] – показать заказы за последние N дней (по умолчанию 2).\n",
-        reply_markup=ReplyKeyboardRemove()
+        "Используй меню ниже для управления ботом.\n"
+        "Также доступны команды: /set_filter, /view_filter, /reset_filter, /history, /status",
+        reply_markup=get_main_menu()
     )
 
-# ---------- /set_filter ----------
+# ---------- Обработчики callback-запросов от меню ----------
+@router.callback_query(lambda c: c.data.startswith("menu_"))
+async def process_menu_callback(callback: types.CallbackQuery, state: FSMContext):
+    action = callback.data.replace("menu_", "")
+    await callback.answer()  # убираем "часики"
+    
+    if action == "set_filter":
+        await cmd_set_filter(callback.message, state)
+    elif action == "view_filter":
+        await cmd_view_filter(callback.message)
+    elif action == "reset_filter":
+        await cmd_reset_filter(callback.message)
+    elif action == "history":
+        await cmd_history(callback.message)
+    elif action == "status":
+        await cmd_status(callback.message)
+
+# ---------- Команда /set_filter ----------
 @router.message(Command("set_filter"))
 async def cmd_set_filter(message: Message, state: FSMContext):
     await state.clear()
@@ -137,7 +161,7 @@ async def process_max_weight(message: Message, state: FSMContext):
     if text == "⏩ Пропустить":
         await state.update_data(max_weight_kg=None)
         await message.answer("✅ Пропущено.", reply_markup=ReplyKeyboardRemove())
-        await ask_max_volume(message, state)
+        await ask_max_pallets(message, state)
         return
     elif text == "❌ Отмена":
         await state.clear()
@@ -156,48 +180,11 @@ async def process_max_weight(message: Message, state: FSMContext):
     else:
         await state.update_data(max_weight_kg=None)
     await message.answer("✅ Сохранено.", reply_markup=ReplyKeyboardRemove())
-    await ask_max_volume(message, state)
-
-async def ask_max_volume(message: Message, state: FSMContext):
-    await message.answer(
-        "Введите **максимальный объём** в кубических метрах (например, 5.0).\n"
-        "Или нажмите «Пропустить».",
-        parse_mode="Markdown",
-        reply_markup=skip_kb
-    )
-    await state.set_state(FilterForm.max_volume)
-
-# ---------- Обработчик максимального объёма ----------
-@router.message(FilterForm.max_volume)
-async def process_max_volume(message: Message, state: FSMContext):
-    text = message.text.strip()
-    if text == "⏩ Пропустить":
-        await state.update_data(max_volume_m3=None)
-        await message.answer("✅ Пропущено.", reply_markup=ReplyKeyboardRemove())
-        await ask_max_pallets(message, state)
-        return
-    elif text == "❌ Отмена":
-        await state.clear()
-        await message.answer("❌ Настройка отменена.", reply_markup=ReplyKeyboardRemove())
-        return
-    
-    if text:
-        try:
-            val = float(text)
-            if val < 0:
-                raise ValueError
-            await state.update_data(max_volume_m3=val)
-        except ValueError:
-            await message.answer("❌ Введите положительное число.")
-            return
-    else:
-        await state.update_data(max_volume_m3=None)
-    await message.answer("✅ Сохранено.", reply_markup=ReplyKeyboardRemove())
     await ask_max_pallets(message, state)
 
 async def ask_max_pallets(message: Message, state: FSMContext):
     await message.answer(
-        "Введите **максимальное количество паллет** (например, 3).\n"
+        "Введите **максимальное количество паллет** (европаллеты 800×1200 мм, например, 3).\n"
         "Или нажмите «Пропустить».",
         parse_mode="Markdown",
         reply_markup=skip_kb
@@ -275,7 +262,6 @@ async def save_filter(message: Message, state: FSMContext):
         "origin_countries": data.get("origin_countries", []),
         "dest_countries": data.get("dest_countries", []),
         "max_weight_kg": data.get("max_weight_kg"),
-        "max_volume_m3": data.get("max_volume_m3"),
         "max_pallets": data.get("max_pallets"),
         "min_price_eur": data.get("min_price_eur"),
     }
@@ -290,14 +276,12 @@ async def save_filter(message: Message, state: FSMContext):
             session.add(UserFilter(user_id=user_id, filter_data=user_filter))
         await session.commit()
     
-    # Показываем итог
     await message.answer(
         "✅ Фильтр успешно сохранён!\n\n"
         f"📌 Страны отправления: {user_filter['origin_countries'] or 'любые'}\n"
         f"📌 Страны назначения: {user_filter['dest_countries'] or 'любые'}\n"
         f"📌 Макс. вес: {user_filter['max_weight_kg'] or 'не ограничен'} кг\n"
-        f"📌 Макс. объём: {user_filter['max_volume_m3'] or 'не ограничен'} м³\n"
-        f"📌 Макс. паллет: {user_filter['max_pallets'] or 'не ограничено'}\n"
+        f"📌 Макс. паллет: {user_filter['max_pallets'] or 'не ограничено'} (800×1200 мм)\n"
         f"📌 Мин. цена: {user_filter['min_price_eur'] or 'не задана'} €",
         parse_mode="Markdown"
     )
@@ -318,8 +302,7 @@ async def cmd_view_filter(message: Message):
                 f"• Страны отправления: {f.get('origin_countries') or 'любые'}\n"
                 f"• Страны назначения: {f.get('dest_countries') or 'любые'}\n"
                 f"• Макс. вес: {f.get('max_weight_kg') or 'не ограничен'} кг\n"
-                f"• Макс. объём: {f.get('max_volume_m3') or 'не ограничен'} м³\n"
-                f"• Макс. паллет: {f.get('max_pallets') or 'не ограничено'}\n"
+                f"• Макс. паллет: {f.get('max_pallets') or 'не ограничено'} (800×1200 мм)\n"
                 f"• Мин. цена: {f.get('min_price_eur') or 'не задана'} €"
             )
             await message.answer(text, parse_mode="Markdown")
@@ -341,18 +324,7 @@ async def cmd_reset_filter(message: Message):
         else:
             await message.answer("📋 Фильтр и так не задан.")
 
-# ---------- /cancel (отмена диалога) ----------
-@router.message(Command("cancel"))
-async def cmd_cancel(message: Message, state: FSMContext):
-    current_state = await state.get_state()
-    if current_state is None:
-        await message.answer("🤔 Нет активного диалога.")
-    else:
-        await state.clear()
-        await message.answer("❌ Настройка отменена.", reply_markup=ReplyKeyboardRemove())
-        from database import get_orders_for_user  # добавьте импорт вверху
-
-# ---------- /history - показать заказы за последние дни ----------
+# ---------- /history ----------
 @router.message(Command("history"))
 async def cmd_history(message: Message):
     user_id = message.from_user.id
@@ -373,16 +345,13 @@ async def cmd_history(message: Message):
         await message.answer(f"📭 Нет заказов за последние {days} дней.")
         return
     
-    # Получаем текущий фильтр пользователя
-    from database import UserFilter, async_session
-    from sqlalchemy import select
+    # Получаем текущий фильтр
     async with async_session() as session:
         stmt = select(UserFilter).where(UserFilter.user_id == user_id)
         result = await session.execute(stmt)
         uf = result.scalar_one_or_none()
         user_filter = uf.filter_data if uf else {}
     
-    # Фильтруем заказы по фильтру пользователя
     from filters import match_filter
     filtered_orders = []
     for o in orders:
@@ -392,7 +361,6 @@ async def cmd_history(message: Message):
             "dest_country": o.dest_country,
             "dest_city": o.dest_city,
             "weight_kg": o.weight_kg,
-            "volume_m3": o.volume_m3,
             "pallets": o.pallets,
             "price_eur": o.price_eur,
         }
@@ -407,52 +375,23 @@ async def cmd_history(message: Message):
     for idx, o in enumerate(filtered_orders[:10], 1):
         lines.append(
             f"{idx}. {o.origin_city} → {o.dest_city}  |  "
-            f"{o.weight_kg} кг  |  {o.price_eur} €  |  {o.platform}"
-        )
-    if len(filtered_orders) > 10:
-        lines.append(f"... и ещё {len(filtered_orders)-10} заказов.")
-    await message.answer("\n".join(lines), parse_mode="Markdown")        
-
-@router.message(Command("history"))
-async def cmd_history(message: Message):
-    user_id = message.from_user.id
-    # По умолчанию 2 дня, но можно передать число после команды, например /history 3
-    args = message.text.split()
-    days = 2
-    if len(args) > 1:
-        try:
-            days = int(args[1])
-            if days < 1:
-                days = 1
-            if days > 7:
-                days = 7
-        except ValueError:
-            pass
-    
-    orders = await get_orders_for_user(user_id, days)
-    if not orders:
-        await message.answer(f"📭 Нет заказов за последние {days} дней.")
-        return
-    
-    # Получаем текущий фильтр пользователя, чтобы показывать только подходящие
-    async with async_session() as session:
-        stmt = select(UserFilter).where(UserFilter.user_id == user_id)
-        result = await session.execute(stmt)
-        uf = result.scalar_one_or_none()
-        user_filter = uf.filter_data if uf else {}
-    
-    filtered_orders = [o for o in orders if match_filter(o.__dict__, user_filter)]
-    if not filtered_orders:
-        await message.answer(f"📭 Заказов за последние {days} дней, подходящих под ваш фильтр, нет.")
-        return
-    
-    # Формируем сообщение со списком заказов
-    lines = [f"📋 **Заказы за последние {days} дней (подходящие под фильтр):**"]
-    for idx, o in enumerate(filtered_orders[:10], 1):  # показываем не более 10
-        lines.append(
-            f"{idx}. {o.origin_city} → {o.dest_city}  |  "
-            f"{o.weight_kg} кг  |  {o.price_eur} €  |  {o.platform}"
+            f"{o.weight_kg} кг  |  {o.pallets} палл.  |  {o.price_eur} €  |  {o.platform}"
         )
     if len(filtered_orders) > 10:
         lines.append(f"... и ещё {len(filtered_orders)-10} заказов.")
     await message.answer("\n".join(lines), parse_mode="Markdown")
+
+# ---------- /status ----------
+@router.message(Command("status"))
+async def cmd_status(message: Message):
+    await message.answer("✅ Бот активен. Сбор заказов происходит каждую минуту.")
+
+# ---------- /cancel (отмена диалога) ----------
+@router.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is None:
+        await message.answer("🤔 Нет активного диалога.")
+    else:
+        await state.clear()
+        await message.answer("❌ Настройка отменена.", reply_markup=ReplyKeyboardRemove())

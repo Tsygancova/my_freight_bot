@@ -1,19 +1,17 @@
 import asyncio
+import os
+from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.types import BotCommand
 from loguru import logger
-import os
-from aiohttp import web
 
 from config import BOT_TOKEN
 from database import init_db
 from bot.handlers import router
+from bot.admin_handlers import router as admin_router
 from utils.scheduler import background_worker
 
-from bot.middlewares import LoggingMiddleware
-# внутри main после создания dp
-dp.update.middleware(LoggingMiddleware())
-
+# --- Веб-сервер для Render ---
 async def health_check(request):
     return web.Response(text="Bot is running!")
 
@@ -26,6 +24,7 @@ async def start_web_server():
     await site.start()
     logger.info(f"Web server started on port {os.environ.get('PORT', 8080)}")
 
+# --- Команды бота ---
 async def set_commands(bot: Bot):
     commands = [
         BotCommand(command="start", description="Запуск бота"),
@@ -37,69 +36,38 @@ async def set_commands(bot: Bot):
         BotCommand(command="favorites", description="Избранное"),
         BotCommand(command="favorite", description="Добавить в избранное по ID"),
         BotCommand(command="unfavorite", description="Удалить из избранного"),
+        BotCommand(command="accepted", description="Принятые заказы"),
         BotCommand(command="help", description="Справка"),
         BotCommand(command="tutorial", description="Обучение"),
         BotCommand(command="status", description="Статус"),
+        BotCommand(command="admin", description="Админ-панель (для админа)"),
     ]
-
-@router.message(Command("accepted"))
-async def cmd_accepted(message: Message):
-    user_id = message.from_user.id
-    async with async_session() as session:
-        stmt = select(AcceptedOrder).where(AcceptedOrder.user_id == user_id).order_by(AcceptedOrder.accepted_at.desc())
-        result = await session.execute(stmt)
-        accepted = result.scalars().all()
-    if not accepted:
-        await message.answer("📋 У вас нет принятых заказов.")
-        return
-    lines = ["📋 **Принятые заказы:**"]
-    for idx, a in enumerate(accepted[:10], 1):
-        lines.append(f"{idx}. Заказ {a.order_id} (платформа: {a.platform}) – принят {a.accepted_at.strftime('%d.%m.%Y %H:%M')}")
-    if len(accepted) > 10:
-        lines.append(f"... и ещё {len(accepted)-10}.")
-    await message.answer("\n".join(lines), parse_mode="Markdown")
     await bot.set_my_commands(commands)
 
-bot = Bot(token=BOT_TOKEN)
-# Сброс вебхука (важно для работы polling)
-await bot.delete_webhook(drop_pending_updates=True)
-
+# --- Главная функция ---
 async def main():
     await init_db()
     logger.info("Database initialized")
+
+    # Создаём бота и диспетчер
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
+    dp.include_router(admin_router)
     await set_commands(bot)
 
-async def cleanup_expired_favorites():
-    """Удаляет из избранного заказы, у которых срок доставки истёк"""
-    async with async_session() as session:
-        # Получаем все избранные заказы
-        favs = await session.execute(select(Favorite))
-        favs = favs.scalars().all()
-        now = datetime.utcnow()
-        for fav in favs:
-            # Находим соответствующий заказ
-            stmt = select(Order).where(
-                Order.id == fav.order_id,
-                Order.platform == fav.platform,
-                Order.user_id == fav.user_id
-            )
-            result = await session.execute(stmt)
-            order = result.scalar_one_or_none()
-            if order and order.deadline and order.deadline < now:
-                await session.delete(fav)
-        await session.commit()
+    # СБРОС ВЕБХУКА (этот await должен быть внутри async-функции)
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Webhook cleared")
 
-    # Запускаем веб-сервер, чтобы Render не ругался на отсутствие портов
+    # Запускаем веб-сервер для Health Checks
     await start_web_server()
 
-    # Запускаем фоновый сбор заказов
+    # Фоновый сбор заказов
     asyncio.create_task(background_worker(bot))
     logger.info("Bot started polling...")
 
-    # Запускаем поллинг (этот вызов теперь внутри async def main())
+    # Запускаем поллинг
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ from filters import match_filter
 from database import async_session, save_order
 from sqlalchemy import select
 from database import UserFilter
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
     for platform_cfg in PLATFORMS:
@@ -16,16 +17,39 @@ async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
             orders = await adapter.fetch_orders()
             for order in orders:
                 await save_order(user_id, order)
-                if match_filter(order, user_filter):
-                    text = (f"🔔 Новый заказ!\n"
-                            f"📦 {order['origin_city']} → {order['dest_city']}\n"
-                            f"⚖️ Вес: {order['weight_kg']} кг\n"
-                            f"📐 Объём: {order['volume_m3']} м³\n"
-                            f"💰 {order['price_eur']} €\n"
-                            f"🏷️ Платформа: {order['platform']}")
-                    await bot.send_message(user_id, text)
-        except Exception as e:
-            logger.error(f"Error fetching from {platform_cfg['name']}: {e}")
+                if match_filter(order, user_filter):if match_filter(order, user_filter):
+    # Формируем кнопки
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🗺️ Карта", url=f"https://www.google.com/maps/dir/{order['origin_city']}+{order['origin_country']}/{order['dest_city']}+{order['dest_country']}"),
+            InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_add_{order['platform']}_{order['id']}")
+        ]
+    ])
+    
+    # Расчёт объёмного веса (если есть объём)
+    volume_weight = None
+    if order.get('volume_m3') and order.get('weight_kg'):
+        # Коэффициент для авто: 1 м³ = 250 кг (можно изменить)
+        volume_weight = round(order['volume_m3'] * 250, 1)
+        chargeable = max(order['weight_kg'], volume_weight)
+    else:
+        chargeable = order.get('weight_kg', 'н/д')
+    
+    # Проверка ADR (если есть un_number)
+    adr_text = ""
+    if order.get('un_number'):
+        # Здесь можно вызвать FreightUtils, но для простоты покажем предупреждение
+        adr_text = f"\n⚠️ UN {order['un_number']} – возможно опасный груз!"
+    
+    text = (f"🔔 Новый заказ!\n"
+            f"📦 {order['origin_city']} → {order['dest_city']}\n"
+            f"⚖️ Вес: {order['weight_kg']} кг"
+            f"{f' (объёмный: {volume_weight} кг, оплачиваемый: {chargeable} кг)' if volume_weight else ''}\n"
+            f"📐 Объём: {order['volume_m3']} м³\n"
+            f"💰 {order['price_eur']} €\n"
+            f"🏷️ Платформа: {order['platform']}"
+            f"{adr_text}")
+    await bot.send_message(user_id, text, reply_markup=keyboard)
 
 async def background_worker(bot):
     while True:

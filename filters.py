@@ -13,10 +13,6 @@ def match_filter(order: dict, user_filter: dict) -> bool:
     if max_w and order.get("weight_kg", 0) > max_w:
         return False
     
-    max_v = user_filter.get("max_volume_m3")
-    if max_v and order.get("volume_m3", 0) > max_v:
-        return False
-    
     max_p = user_filter.get("max_pallets")
     if max_p and order.get("pallets", 0) > max_p:
         return False

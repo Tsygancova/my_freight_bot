@@ -5,6 +5,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton
 from database import async_session, User, UserFilter, get_orders_for_user
 from sqlalchemy import select
+from database import add_favorite, remove_favorite, get_favorites, get_orders_for_user
+from sqlalchemy import func, select
+from database import Order, UserFilter
 import re
 
 router = Router()
@@ -34,7 +37,10 @@ def get_main_menu():
         [InlineKeyboardButton(text="📋 Показать фильтры", callback_data="menu_view_filter")],
         [InlineKeyboardButton(text="🔄 Сбросить фильтры", callback_data="menu_reset_filter")],
         [InlineKeyboardButton(text="📜 История заказов", callback_data="menu_history")],
-        [InlineKeyboardButton(text="ℹ️ Статус", callback_data="menu_status")],
+        [InlineKeyboardButton(text="⭐ Избранное", callback_data="menu_favorites")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="menu_stats")],
+        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="menu_help")],
+        [InlineKeyboardButton(text="📡 Статус", callback_data="menu_status")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -70,6 +76,12 @@ async def process_menu_callback(callback: types.CallbackQuery, state: FSMContext
         await cmd_history(callback.message)
     elif action == "status":
         await cmd_status(callback.message)
+    elif action == "favorites":
+        await cmd_favorites(callback.message)
+    elif action == "stats":
+        await cmd_stats(callback.message)
+    elif action == "help":
+        await cmd_help(callback.message)
 
 # ---------- Команда /set_filter ----------
 @router.message(Command("set_filter"))
@@ -181,6 +193,137 @@ async def process_max_weight(message: Message, state: FSMContext):
         await state.update_data(max_weight_kg=None)
     await message.answer("✅ Сохранено.", reply_markup=ReplyKeyboardRemove())
     await ask_max_pallets(message, state)
+
+@router.message(Command("help"))
+async def cmd_help(message: Message):
+    text = (
+        "📖 **Доступные команды:**\n\n"
+        "/start – запуск бота\n"
+        "/set_filter – настроить фильтры (пошагово)\n"
+        "/view_filter – показать текущие фильтры\n"
+        "/reset_filter – сбросить фильтры\n"
+        "/history [дни] – показать заказы за последние N дней\n"
+        "/stats – статистика по заказам\n"
+        "/favorites – показать избранные заказы\n"
+        "/favorite <id> – добавить заказ в избранное (по ID)\n"
+        "/unfavorite <id> – удалить из избранного\n"
+        "/status – статус бота\n"
+        "/help – эта справка"
+    )
+    await message.answer(text, parse_mode="Markdown")
+
+@router.message(Command("stats"))
+async def cmd_stats(message: Message):
+    user_id = message.from_user.id
+    async with async_session() as session:
+        # Общее количество заказов для пользователя
+        total_orders = await session.scalar(select(func.count()).where(Order.user_id == user_id))
+        if not total_orders:
+            await message.answer("📊 Нет данных по заказам.")
+            return
+        
+        # Средняя цена
+        avg_price = await session.scalar(select(func.avg(Order.price_eur)).where(Order.user_id == user_id))
+        avg_price = round(avg_price, 2) if avg_price else 0
+        
+        # Топ-3 маршрутов (по паре город-страна отправления -> город-страна назначения)
+        top_routes = await session.execute(
+            select(Order.origin_city, Order.origin_country, Order.dest_city, Order.dest_country, func.count())
+            .where(Order.user_id == user_id)
+            .group_by(Order.origin_city, Order.origin_country, Order.dest_city, Order.dest_country)
+            .order_by(func.count().desc())
+            .limit(3)
+        )
+        routes = top_routes.all()
+        route_lines = []
+        for r in routes:
+            route_lines.append(f"• {r[0]},{r[1]} → {r[2]},{r[3]} – {r[4]} заказов")
+        
+        text = (
+            "📊 **Статистика заказов:**\n"
+            f"• Всего заказов: {total_orders}\n"
+            f"• Средняя цена: {avg_price} €\n"
+            "• Топ-3 маршрута:\n" + "\n".join(route_lines) if route_lines else "• (нет данных)"
+        )
+        await message.answer(text, parse_mode="Markdown")
+
+@router.message(Command("favorites"))
+async def cmd_favorites(message: Message):
+    user_id = message.from_user.id
+    favs = await get_favorites(user_id)
+    if not favs:
+        await message.answer("⭐ У вас пока нет избранных заказов.")
+        return
+    
+    # Получаем сами заказы из таблицы orders
+    async with async_session() as session:
+        order_ids = [(f.order_id, f.platform) for f in favs]
+        # Собираем заказы по ID и платформе
+        orders = []
+        for oid, plat in order_ids:
+            stmt = select(Order).where(Order.id == oid, Order.platform == plat, Order.user_id == user_id)
+            result = await session.execute(stmt)
+            order = result.scalar_one_or_none()
+            if order:
+                orders.append(order)
+    
+    if not orders:
+        await message.answer("⭐ Избранные заказы не найдены (возможно, они уже удалены).")
+        return
+    
+    lines = ["⭐ **Избранные заказы:**"]
+    for idx, o in enumerate(orders[:10], 1):
+        lines.append(
+            f"{idx}. {o.origin_city} → {o.dest_city}  |  "
+            f"{o.weight_kg} кг  |  {o.price_eur} €  |  {o.platform}  |  ID: {o.id}"
+        )
+    if len(orders) > 10:
+        lines.append(f"... и ещё {len(orders)-10}.")
+    await message.answer("\n".join(lines), parse_mode="Markdown")
+
+@router.message(Command("favorite"))
+async def cmd_favorite(message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID заказа. Пример: /favorite mock_0")
+        return
+    order_id = args[1].strip()
+    user_id = message.from_user.id
+    # Ищем заказ в БД
+    async with async_session() as session:
+        stmt = select(Order).where(Order.id == order_id, Order.user_id == user_id)
+        result = await session.execute(stmt)
+        order = result.scalar_one_or_none()
+        if not order:
+            await message.answer("❌ Заказ с таким ID не найден.")
+            return
+        added = await add_favorite(user_id, order.id, order.platform)
+        if added:
+            await message.answer(f"⭐ Заказ {order_id} добавлен в избранное.")
+        else:
+            await message.answer(f"⭐ Заказ {order_id} уже в избранном.")
+
+@router.message(Command("unfavorite"))
+async def cmd_unfavorite(message: Message):
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.answer("❌ Укажите ID заказа. Пример: /unfavorite mock_0")
+        return
+    order_id = args[1].strip()
+    user_id = message.from_user.id
+    # Ищем заказ
+    async with async_session() as session:
+        stmt = select(Order).where(Order.id == order_id, Order.user_id == user_id)
+        result = await session.execute(stmt)
+        order = result.scalar_one_or_none()
+        if not order:
+            await message.answer("❌ Заказ с таким ID не найден.")
+            return
+        removed = await remove_favorite(user_id, order.id, order.platform)
+        if removed:
+            await message.answer(f"⭐ Заказ {order_id} удалён из избранного.")
+        else:
+            await message.answer(f"⭐ Заказ {order_id} не был в избранном.")
 
 async def ask_max_pallets(message: Message, state: FSMContext):
     await message.answer(
@@ -395,3 +538,20 @@ async def cmd_cancel(message: Message, state: FSMContext):
     else:
         await state.clear()
         await message.answer("❌ Настройка отменена.", reply_markup=ReplyKeyboardRemove())
+
+from aiogram.types import CallbackQuery
+
+@router.callback_query(lambda c: c.data.startswith("fav_add_"))
+async def callback_fav_add(callback: CallbackQuery):
+    # формат: fav_add_{platform}_{order_id}
+    data = callback.data.replace("fav_add_", "").split("_", 1)
+    if len(data) != 2:
+        await callback.answer("Ошибка", show_alert=True)
+        return
+    platform, order_id = data[0], data[1]
+    user_id = callback.from_user.id
+    added = await add_favorite(user_id, order_id, platform)
+    if added:
+        await callback.answer("⭐ Добавлено в избранное!", show_alert=False)
+    else:
+        await callback.answer("⏳ Уже в избранном", show_alert=False)

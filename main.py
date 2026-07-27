@@ -24,13 +24,18 @@ async def start_web_server():
 
 async def set_commands(bot: Bot):
     commands = [
-        BotCommand(command="start", description="Запуск бота"),
-        BotCommand(command="set_filter", description="Установить фильтр (диалог)"),
-        BotCommand(command="view_filter", description="Просмотреть текущий фильтр"),
-        BotCommand(command="reset_filter", description="Сбросить фильтр"),
-        BotCommand(command="history", description="История заказов (2 дня)"),
-        BotCommand(command="status", description="Статус системы"),
-    ]
+    BotCommand(command="start", description="Запуск бота"),
+    BotCommand(command="set_filter", description="Установить фильтр (диалог)"),
+    BotCommand(command="view_filter", description="Просмотреть текущий фильтр"),
+    BotCommand(command="reset_filter", description="Сбросить фильтр"),
+    BotCommand(command="history", description="История заказов (дни)"),
+    BotCommand(command="stats", description="Статистика по заказам"),
+    BotCommand(command="favorites", description="Избранные заказы"),
+    BotCommand(command="favorite", description="Добавить в избранное по ID"),
+    BotCommand(command="unfavorite", description="Удалить из избранного"),
+    BotCommand(command="status", description="Статус системы"),
+    BotCommand(command="help", description="Помощь"),
+]
     await bot.set_my_commands(commands)
 
 async def main():

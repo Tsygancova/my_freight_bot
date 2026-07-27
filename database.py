@@ -36,6 +36,18 @@ class Order(Base):
         Index('idx_order_user_created', 'user_id', 'created_at'),
     )
 
+class Favorite(Base):
+    __tablename__ = "favorites"
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id = mapped_column(BigInteger)
+    order_id = mapped_column(String(100))  # ID заказа из таблицы orders
+    platform = mapped_column(String(50))
+    created_at = mapped_column(DateTime, default=datetime.utcnow)
+    
+    __table_args__ = (
+        Index('idx_favorite_user_order', 'user_id', 'order_id', unique=True),
+    )
+
 async def save_order(user_id: int, order_data: dict):
     async with async_session() as session:
         stmt = select(Order).where(
@@ -75,6 +87,43 @@ async def get_orders_for_user(user_id: int, days: int = 2):
             Order.user_id == user_id,
             Order.created_at >= cutoff
         ).order_by(Order.created_at.desc())
+        result = await session.execute(stmt)
+        return result.scalars().all()
+
+async def add_favorite(user_id: int, order_id: str, platform: str):
+    async with async_session() as session:
+        # Проверяем, не добавлен ли уже
+        stmt = select(Favorite).where(
+            Favorite.user_id == user_id,
+            Favorite.order_id == order_id,
+            Favorite.platform == platform
+        )
+        result = await session.execute(stmt)
+        if result.scalar_one_or_none() is None:
+            fav = Favorite(user_id=user_id, order_id=order_id, platform=platform)
+            session.add(fav)
+            await session.commit()
+            return True
+        return False
+
+async def remove_favorite(user_id: int, order_id: str, platform: str):
+    async with async_session() as session:
+        stmt = select(Favorite).where(
+            Favorite.user_id == user_id,
+            Favorite.order_id == order_id,
+            Favorite.platform == platform
+        )
+        result = await session.execute(stmt)
+        fav = result.scalar_one_or_none()
+        if fav:
+            await session.delete(fav)
+            await session.commit()
+            return True
+        return False
+
+async def get_favorites(user_id: int):
+    async with async_session() as session:
+        stmt = select(Favorite).where(Favorite.user_id == user_id).order_by(Favorite.created_at.desc())
         result = await session.execute(stmt)
         return result.scalars().all()
 

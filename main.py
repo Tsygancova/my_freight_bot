@@ -8,7 +8,6 @@ from loguru import logger
 from config import BOT_TOKEN
 from database import init_db
 from bot.handlers import router
-from bot.admin_handlers import router as admin_router
 from utils.scheduler import background_worker
 
 # --- Веб-сервер для Render ---
@@ -37,10 +36,11 @@ async def set_commands(bot: Bot):
         BotCommand(command="favorite", description="Добавить в избранное по ID"),
         BotCommand(command="unfavorite", description="Удалить из избранного"),
         BotCommand(command="accepted", description="Принятые заказы"),
+        BotCommand(command="pause", description="Приостановить уведомления"),
+        BotCommand(command="resume", description="Возобновить уведомления"),
         BotCommand(command="help", description="Справка"),
         BotCommand(command="tutorial", description="Обучение"),
         BotCommand(command="status", description="Статус"),
-        BotCommand(command="admin", description="Админ-панель (для админа)"),
     ]
     await bot.set_my_commands(commands)
 
@@ -49,25 +49,20 @@ async def main():
     await init_db()
     logger.info("Database initialized")
 
-    # Создаём бота и диспетчер
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
     dp.include_router(router)
-    dp.include_router(admin_router)
     await set_commands(bot)
 
-    # СБРОС ВЕБХУКА (этот await должен быть внутри async-функции)
+    # Сброс вебхука
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("Webhook cleared")
 
-    # Запускаем веб-сервер для Health Checks
     await start_web_server()
 
-    # Фоновый сбор заказов
     asyncio.create_task(background_worker(bot))
     logger.info("Bot started polling...")
 
-    # Запускаем поллинг
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

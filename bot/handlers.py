@@ -35,18 +35,52 @@ skip_kb = ReplyKeyboardMarkup(
 
 # ---- Главное меню ----
 def get_main_menu():
+    """Главное меню (категории)"""
+    buttons = [
+        [InlineKeyboardButton(text="🔧 Настройки фильтров", callback_data="menu_filters")],
+        [InlineKeyboardButton(text="📦 Мои заказы", callback_data="menu_orders")],
+        [InlineKeyboardButton(text="📊 Аналитика", callback_data="menu_analytics")],
+        [InlineKeyboardButton(text="📖 Помощь", callback_data="menu_help")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+    def get_filters_menu():
+    """Подменю: Настройки фильтров"""
     buttons = [
         [InlineKeyboardButton(text="🔧 Настроить фильтры", callback_data="menu_set_filter")],
         [InlineKeyboardButton(text="📋 Показать фильтры", callback_data="menu_view_filter")],
         [InlineKeyboardButton(text="🔄 Сбросить фильтры", callback_data="menu_reset_filter")],
-        [InlineKeyboardButton(text="📜 История заказов", callback_data="menu_history")],
-        [InlineKeyboardButton(text="⭐ Избранное", callback_data="menu_favorites")],
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="menu_stats")],
-        [InlineKeyboardButton(text="📖 Помощь", callback_data="menu_help")],
-        [InlineKeyboardButton(text="📚 Обучение", callback_data="menu_tutorial")],
-        [InlineKeyboardButton(text="📡 Статус", callback_data="menu_status")],
         [InlineKeyboardButton(text="⏸️ Пауза", callback_data="menu_pause")],
         [InlineKeyboardButton(text="▶️ Возобновить", callback_data="menu_resume")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_orders_menu():
+    """Подменю: Мои заказы"""
+    buttons = [
+        [InlineKeyboardButton(text="📜 История заказов", callback_data="menu_history")],
+        [InlineKeyboardButton(text="⭐ Избранное", callback_data="menu_favorites")],
+        [InlineKeyboardButton(text="📋 Принятые заказы", callback_data="menu_accepted")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_analytics_menu():
+    """Подменю: Аналитика"""
+    buttons = [
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="menu_stats")],
+        [InlineKeyboardButton(text="📡 Статус", callback_data="menu_status")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back_main")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+def get_help_menu():
+    """Подменю: Помощь"""
+    buttons = [
+        [InlineKeyboardButton(text="📖 Помощь", callback_data="menu_help")],
+        [InlineKeyboardButton(text="📚 Обучение", callback_data="menu_tutorial")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="menu_back_main")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
@@ -72,28 +106,43 @@ async def process_menu_callback(callback: types.CallbackQuery, state: FSMContext
     action = callback.data.replace("menu_", "")
     await callback.answer()
     
-    if action == "set_filter":
+    # ----- Переходы по категориям -----
+    if action == "filters":
+        await callback.message.edit_text("🔧 **Настройки фильтров**", reply_markup=get_filters_menu(), parse_mode="Markdown")
+    elif action == "orders":
+        await callback.message.edit_text("📦 **Управление заказами**", reply_markup=get_orders_menu(), parse_mode="Markdown")
+    elif action == "analytics":
+        await callback.message.edit_text("📊 **Аналитика**", reply_markup=get_analytics_menu(), parse_mode="Markdown")
+    elif action == "help":
+        await callback.message.edit_text("📖 **Помощь**", reply_markup=get_help_menu(), parse_mode="Markdown")
+    elif action == "back_main":
+        await callback.message.edit_text("🚚 Главное меню", reply_markup=get_main_menu(), parse_mode="Markdown")
+    
+    # ----- Действия из подменю (все остальные) -----
+    elif action == "set_filter":
         await cmd_set_filter(callback.message, state)
     elif action == "view_filter":
         await cmd_view_filter(callback.message)
     elif action == "reset_filter":
         await cmd_reset_filter(callback.message)
-    elif action == "history":
-        await cmd_history(callback.message)
-    elif action == "favorites":
-        await cmd_favorites(callback.message)
-    elif action == "stats":
-        await cmd_stats(callback.message)
-    elif action == "help":
-        await cmd_help(callback.message)
-    elif action == "tutorial":
-        await cmd_tutorial(callback.message)
-    elif action == "status":
-        await cmd_status(callback.message)
     elif action == "pause":
         await cmd_pause(callback.message)
     elif action == "resume":
         await cmd_resume(callback.message)
+    elif action == "history":
+        await cmd_history(callback.message)
+    elif action == "favorites":
+        await cmd_favorites(callback.message)
+    elif action == "accepted":
+        await cmd_accepted(callback.message)
+    elif action == "stats":
+        await cmd_stats(callback.message)
+    elif action == "status":
+        await cmd_status(callback.message)
+    elif action == "help":
+        await cmd_help(callback.message)
+    elif action == "tutorial":
+        await cmd_tutorial(callback.message)
 
 # ---- /set_filter (пошагово) ----
 @router.message(Command("set_filter"))

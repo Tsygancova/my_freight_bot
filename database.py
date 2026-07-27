@@ -40,7 +40,7 @@ class Favorite(Base):
     __tablename__ = "favorites"
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id = mapped_column(BigInteger)
-    order_id = mapped_column(String(100))  # ID заказа из таблицы orders
+    order_id = mapped_column(String(100))
     platform = mapped_column(String(50))
     created_at = mapped_column(DateTime, default=datetime.utcnow)
     
@@ -48,6 +48,7 @@ class Favorite(Base):
         Index('idx_favorite_user_order', 'user_id', 'order_id', unique=True),
     )
 
+# ---------- Сохранение заказа ----------
 async def save_order(user_id: int, order_data: dict):
     async with async_session() as session:
         stmt = select(Order).where(
@@ -80,6 +81,7 @@ async def save_order(user_id: int, order_data: dict):
             session.add(order)
         await session.commit()
 
+# ---------- Получение заказов за N дней ----------
 async def get_orders_for_user(user_id: int, days: int = 2):
     cutoff = datetime.utcnow() - timedelta(days=days)
     async with async_session() as session:
@@ -90,9 +92,9 @@ async def get_orders_for_user(user_id: int, days: int = 2):
         result = await session.execute(stmt)
         return result.scalars().all()
 
+# ---------- Избранное ----------
 async def add_favorite(user_id: int, order_id: str, platform: str):
     async with async_session() as session:
-        # Проверяем, не добавлен ли уже
         stmt = select(Favorite).where(
             Favorite.user_id == user_id,
             Favorite.order_id == order_id,
@@ -127,6 +129,7 @@ async def get_favorites(user_id: int):
         result = await session.execute(stmt)
         return result.scalars().all()
 
+# ---------- Настройка БД ----------
 engine = create_async_engine(
     "sqlite+aiosqlite:///./data.db",
     echo=False,

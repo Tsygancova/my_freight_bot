@@ -10,15 +10,12 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from datetime import datetime
 
 async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
-    # Проверяем, не на паузе ли пользователь
+    # Проверка паузы
     async with async_session() as session:
         user = await session.get(User, user_id)
         if user and user.paused:
-            return  # Если на паузе — пропускаем
-    
-    # ... остальной код
+            return
 
-async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
     for platform_cfg in PLATFORMS:
         if not platform_cfg.get("enabled", True):
             continue
@@ -29,14 +26,27 @@ async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
                 await save_order(user_id, order)
                 if match_filter(order, user_filter):
                     # Кнопки
-                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [
-                        InlineKeyboardButton(text="✅ Взять заказ", callback_data=f"take_{order['platform']}_{order['id']}"),
-                        InlineKeyboardButton(text="🗺️ Карта", url=...),
-                        InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_add_{order['platform']}_{order['id']}")
-                    ])
+                    keyboard_buttons = [
+                        [
+                            InlineKeyboardButton(
+                                text="🗺️ Карта",
+                                url=f"https://www.google.com/maps/dir/{order['origin_city']}+{order['origin_country']}/{order['dest_city']}+{order['dest_country']}"
+                            ),
+                            InlineKeyboardButton(
+                                text="⭐ В избранное",
+                                callback_data=f"fav_add_{order['platform']}_{order['id']}"
+                            )
+                        ],
+                        [
+                            InlineKeyboardButton(
+                                text="✅ Взять заказ",
+                                callback_data=f"take_{order['platform']}_{order['id']}"
+                            )
+                        ]
+                    ]
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
                     
-                    # Объёмный вес (если есть объём)
+                    # Объёмный вес
                     volume_weight = None
                     if order.get('volume_m3') and order.get('weight_kg'):
                         volume_weight = round(order['volume_m3'] * 250, 1)
@@ -44,12 +54,16 @@ async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
                     else:
                         chargeable = order.get('weight_kg', 'н/д')
                     
-                    # Проверка ADR (если есть un_number)
+                    # ADR
                     adr_text = ""
                     if order.get('un_number'):
                         adr_text = f"\n⚠️ UN {order['un_number']} – возможно опасный груз!"
-                                    
-                                    deadline_text = "не указан"
+                    
+                    # Паллеты
+                    pallets_text = f"{order.get('pallets', 'н/д')} палл."
+                    
+                    # Срок доставки
+                    deadline_text = "не указан"
                     if order.get('deadline'):
                         try:
                             dt = datetime.fromisoformat(order['deadline'])
@@ -57,20 +71,16 @@ async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
                         except:
                             pass
                     
-                    # Паллеты
-                    pallets_text = f"{order.get('pallets', 'н/д')} палл."
-                    
                     text = (f"🔔 Новый заказ!\n"
-                        f"📦 {order['origin_city']} → {order['dest_city']}\n"
-                        f"⚖️ Вес: {order['weight_kg']} кг"
-                        f"{f' (объёмный: {volume_weight} кг, оплачиваемый: {chargeable} кг)' if volume_weight else ''}\n"
-                        f"📦 Паллет: {pallets_text}\n"
-                        f"💰 {order['price_eur']} €\n"
-                        f"🆔 ID: {order['id']}\n"   # <-- ЭТА СТРОЧКА
-                        f"🏷️ Платформа: {order['platform']}"
-                        f"{adr_text}")
-                        f"⏳ Доставка до: {deadline_text}\n"
-                        
+                            f"📦 {order['origin_city']} → {order['dest_city']}\n"
+                            f"⚖️ Вес: {order['weight_kg']} кг"
+                            f"{f' (объёмный: {volume_weight} кг, оплачиваемый: {chargeable} кг)' if volume_weight else ''}\n"
+                            f"📦 Паллет: {pallets_text}\n"
+                            f"⏳ Доставка до: {deadline_text}\n"
+                            f"💰 {order['price_eur']} €\n"
+                            f"🆔 ID: {order['id']}\n"
+                            f"🏷️ Платформа: {order['platform']}"
+                            f"{adr_text}")
                     await bot.send_message(user_id, text, reply_markup=keyboard)
         except Exception as e:
             logger.error(f"Error fetching from {platform_cfg['name']}: {e}")

@@ -9,6 +9,7 @@ class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    paused: Mapped[bool] = mapped_column(default=False)  # <-- НОВОЕ ПОЛЕ
 
 class UserFilter(Base):
     __tablename__ = "filters"
@@ -48,12 +49,6 @@ class Favorite(Base):
     __table_args__ = (
         Index('idx_favorite_user_order', 'user_id', 'order_id', unique=True),
     )
-
-class User(Base):
-    __tablename__ = "users"
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-    paused: Mapped[bool] = mapped_column(default=False)  # <-- НОВОЕ ПОЛЕ
 
 class AcceptedOrder(Base):
     __tablename__ = "accepted_orders"

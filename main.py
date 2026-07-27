@@ -25,6 +25,39 @@ async def main():
     await set_commands(bot)
     asyncio.create_task(background_worker(bot))
     logger.info("Bot started polling...")
+    # ... ваш существующий код ...
+import os
+from aiohttp import web
+
+async def health_check(request):
+    return web.Response(text="Bot is running!")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port=int(os.environ.get('PORT', 8080)))
+    await site.start()
+    print(f"Web server started on port {os.environ.get('PORT', 8080)}")
+
+async def main():
+    await init_db()
+    logger.info("Database initialized")
+    bot = Bot(token=BOT_TOKEN)
+    dp = Dispatcher()
+    dp.include_router(router)
+    await set_commands(bot)
+
+    # Запускаем веб-сервер для Render Health Checks
+    await start_web_server()
+
+    asyncio.create_task(background_worker(bot))
+    logger.info("Bot started polling...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

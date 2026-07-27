@@ -41,6 +41,23 @@ async def set_commands(bot: Bot):
         BotCommand(command="tutorial", description="Обучение"),
         BotCommand(command="status", description="Статус"),
     ]
+
+@router.message(Command("accepted"))
+async def cmd_accepted(message: Message):
+    user_id = message.from_user.id
+    async with async_session() as session:
+        stmt = select(AcceptedOrder).where(AcceptedOrder.user_id == user_id).order_by(AcceptedOrder.accepted_at.desc())
+        result = await session.execute(stmt)
+        accepted = result.scalars().all()
+    if not accepted:
+        await message.answer("📋 У вас нет принятых заказов.")
+        return
+    lines = ["📋 **Принятые заказы:**"]
+    for idx, a in enumerate(accepted[:10], 1):
+        lines.append(f"{idx}. Заказ {a.order_id} (платформа: {a.platform}) – принят {a.accepted_at.strftime('%d.%m.%Y %H:%M')}")
+    if len(accepted) > 10:
+        lines.append(f"... и ещё {len(accepted)-10}.")
+    await message.answer("\n".join(lines), parse_mode="Markdown")
     await bot.set_my_commands(commands)
 
 bot = Bot(token=BOT_TOKEN)
@@ -54,6 +71,26 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
     await set_commands(bot)
+
+async def cleanup_expired_favorites():
+    """Удаляет из избранного заказы, у которых срок доставки истёк"""
+    async with async_session() as session:
+        # Получаем все избранные заказы
+        favs = await session.execute(select(Favorite))
+        favs = favs.scalars().all()
+        now = datetime.utcnow()
+        for fav in favs:
+            # Находим соответствующий заказ
+            stmt = select(Order).where(
+                Order.id == fav.order_id,
+                Order.platform == fav.platform,
+                Order.user_id == fav.user_id
+            )
+            result = await session.execute(stmt)
+            order = result.scalar_one_or_none()
+            if order and order.deadline and order.deadline < now:
+                await session.delete(fav)
+        await session.commit()
 
     # Запускаем веб-сервер, чтобы Render не ругался на отсутствие портов
     await start_web_server()

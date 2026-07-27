@@ -2,6 +2,9 @@ from adapters.base import BaseAdapter
 import random
 import asyncio
 
+from datetime import datetime, timedelta
+import random
+
 class MockAdapter(BaseAdapter):
     async def fetch_orders(self) -> list[dict]:
         await asyncio.sleep(0.5)
@@ -23,5 +26,12 @@ class MockAdapter(BaseAdapter):
                 "price_eur": random.randint(80, 500),
                 "un_number": un,   # <-- добавили UN-номер
                 "raw": {}
-            })
+                deadline_days = random.randint(2, 7)
+        deadline = datetime.utcnow() + timedelta(days=deadline_days)
+
+        orders.append({
+            # ... остальные поля ...
+            "deadline": deadline.isoformat(),  # передаём строкой
+        })        
+                    })
         return orders

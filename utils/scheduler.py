@@ -7,6 +7,7 @@ from database import async_session, save_order, add_favorite
 from sqlalchemy import select
 from database import UserFilter, Order
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from datetime import datetime
 
 async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
     # Проверяем, не на паузе ли пользователь
@@ -29,16 +30,10 @@ async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
                 if match_filter(order, user_filter):
                     # Кнопки
                     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="🗺️ Карта",
-                                url=f"https://www.google.com/maps/dir/{order['origin_city']}+{order['origin_country']}/{order['dest_city']}+{order['dest_country']}"
-                            ),
-                            InlineKeyboardButton(
-                                text="⭐ В избранное",
-                                callback_data=f"fav_add_{order['platform']}_{order['id']}"
-                            )
-                        ]
+                    [
+                        InlineKeyboardButton(text="✅ Взять заказ", callback_data=f"take_{order['platform']}_{order['id']}"),
+                        InlineKeyboardButton(text="🗺️ Карта", url=...),
+                        InlineKeyboardButton(text="⭐ В избранное", callback_data=f"fav_add_{order['platform']}_{order['id']}")
                     ])
                     
                     # Объёмный вес (если есть объём)
@@ -53,6 +48,14 @@ async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
                     adr_text = ""
                     if order.get('un_number'):
                         adr_text = f"\n⚠️ UN {order['un_number']} – возможно опасный груз!"
+                                    
+                                    deadline_text = "не указан"
+                    if order.get('deadline'):
+                        try:
+                            dt = datetime.fromisoformat(order['deadline'])
+                            deadline_text = dt.strftime('%d.%m.%Y %H:%M')
+                        except:
+                            pass
                     
                     # Паллеты
                     pallets_text = f"{order.get('pallets', 'н/д')} палл."
@@ -66,6 +69,8 @@ async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
                         f"🆔 ID: {order['id']}\n"   # <-- ЭТА СТРОЧКА
                         f"🏷️ Платформа: {order['platform']}"
                         f"{adr_text}")
+                        f"⏳ Доставка до: {deadline_text}\n"
+                        
                     await bot.send_message(user_id, text, reply_markup=keyboard)
         except Exception as e:
             logger.error(f"Error fetching from {platform_cfg['name']}: {e}")

@@ -4,8 +4,10 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from database import async_session, User, UserFilter, get_orders_for_user, add_favorite, remove_favorite, get_favorites, Order
+from database import accept_order, get_favorites, add_favorite, remove_favorite, Order
 from sqlalchemy import select, func
 import re
+
 
 router = Router()
 
@@ -203,6 +205,35 @@ async def process_max_weight(message: Message, state: FSMContext):
         await state.update_data(max_weight_kg=None)
     await message.answer("✅ Сохранено.", reply_markup=ReplyKeyboardRemove())
     await ask_max_pallets(message, state)
+
+@router.callback_query(lambda c: c.data.startswith("take_"))
+async def callback_take_order(callback: CallbackQuery):
+    data = callback.data.replace("take_", "").split("_", 1)
+    if len(data) != 2:
+        await callback.answer("Ошибка", show_alert=True)
+        return
+    platform, order_id = data[0], data[1]
+    user_id = callback.from_user.id
+    
+    # Проверяем, не принят ли уже этот заказ
+    async with async_session() as session:
+        stmt = select(AcceptedOrder).where(
+            AcceptedOrder.user_id == user_id,
+            AcceptedOrder.order_id == order_id,
+            AcceptedOrder.platform == platform
+        )
+        result = await session.execute(stmt)
+        if result.scalar_one_or_none():
+            await callback.answer("⚠️ Заказ уже принят ранее.", show_alert=True)
+            return
+    
+    # Принимаем заказ
+    await accept_order(user_id, order_id, platform)
+    await callback.answer("✅ Заказ принят!", show_alert=False)
+    # Удаляем кнопки из сообщения, чтобы не нажимали повторно
+    await callback.message.edit_reply_markup(reply_markup=None)
+    # Можно добавить текст "Принято" в само сообщение
+    await callback.message.edit_text(callback.message.text + "\n\n✅ **Принято!**")
 
 async def ask_max_pallets(message: Message, state: FSMContext):
     await message.answer(
@@ -438,6 +469,19 @@ async def cmd_favorites(message: Message):
     if not orders:
         await message.answer("⭐ Избранные заказы не найдены (возможно, удалены).")
         return
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    [
+        InlineKeyboardButton(text="✅ Взять заказ", callback_data=f"take_{platform}_{order_id}"),
+        InlineKeyboardButton(text="❌ Удалить", callback_data=f"fav_del_{platform}_{order_id}")
+    ]
+])
+
+# Проверяем, не истёк ли срок доставки
+if order.deadline and order.deadline < datetime.utcnow():
+    # Удаляем из избранного
+    await remove_favorite(user_id, order.id, order.platform)
+    continue  # пропускаем этот заказ
     
     # Отправляем каждый заказ отдельно с кнопкой "Удалить"
     for order, platform, order_id in orders[:10]:  # ограничим 10 для краткости

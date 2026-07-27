@@ -31,6 +31,7 @@ class Order(Base):
     raw_data = mapped_column(JSON, nullable=True)
     created_at = mapped_column(DateTime, default=datetime.utcnow)
     expires_at = mapped_column(DateTime, default=lambda: datetime.utcnow() + timedelta(days=7))
+    deadline = mapped_column(DateTime, nullable=True)  # срок доставки
     
     __table_args__ = (
         Index('idx_order_user_created', 'user_id', 'created_at'),
@@ -47,12 +48,21 @@ class Favorite(Base):
     __table_args__ = (
         Index('idx_favorite_user_order', 'user_id', 'order_id', unique=True),
     )
-    
+
 class User(Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
     paused: Mapped[bool] = mapped_column(default=False)  # <-- НОВОЕ ПОЛЕ
+
+class AcceptedOrder(Base):
+    __tablename__ = "accepted_orders"
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id = mapped_column(BigInteger)
+    order_id = mapped_column(String(100))
+    platform = mapped_column(String(50))
+    accepted_at = mapped_column(DateTime, default=datetime.utcnow)
+    # можно добавить ещё поля по желанию
 
 
 # ---------- Сохранение заказа ----------
@@ -87,6 +97,25 @@ async def save_order(user_id: int, order_data: dict):
             )
             session.add(order)
         await session.commit()
+
+async def accept_order(user_id: int, order_id: str, platform: str):
+    """Сохраняет заказ как принятый и удаляет из избранного"""
+    async with async_session() as session:
+        # Добавляем в принятые
+        accepted = AcceptedOrder(user_id=user_id, order_id=order_id, platform=platform)
+        session.add(accepted)
+        # Удаляем из избранного (если там есть)
+        stmt = select(Favorite).where(
+            Favorite.user_id == user_id,
+            Favorite.order_id == order_id,
+            Favorite.platform == platform
+        )
+        result = await session.execute(stmt)
+        fav = result.scalar_one_or_none()
+        if fav:
+            await session.delete(fav)
+        await session.commit()
+        return True
 
 # ---------- Получение заказов за N дней ----------
 async def get_orders_for_user(user_id: int, days: int = 2):

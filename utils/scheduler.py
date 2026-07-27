@@ -9,6 +9,15 @@ from database import UserFilter, Order
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
+    # Проверяем, не на паузе ли пользователь
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if user and user.paused:
+            return  # Если на паузе — пропускаем
+    
+    # ... остальной код
+
+async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
     for platform_cfg in PLATFORMS:
         if not platform_cfg.get("enabled", True):
             continue

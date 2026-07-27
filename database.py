@@ -47,6 +47,13 @@ class Favorite(Base):
     __table_args__ = (
         Index('idx_favorite_user_order', 'user_id', 'order_id', unique=True),
     )
+    
+class User(Base):
+    __tablename__ = "users"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+    paused: Mapped[bool] = mapped_column(default=False)  # <-- НОВОЕ ПОЛЕ
+
 
 # ---------- Сохранение заказа ----------
 async def save_order(user_id: int, order_data: dict):

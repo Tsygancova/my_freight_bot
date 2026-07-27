@@ -10,6 +10,10 @@ from database import init_db
 from bot.handlers import router
 from utils.scheduler import background_worker
 
+from bot.middlewares import LoggingMiddleware
+# внутри main после создания dp
+dp.update.middleware(LoggingMiddleware())
+
 async def health_check(request):
     return web.Response(text="Bot is running!")
 
@@ -38,6 +42,10 @@ async def set_commands(bot: Bot):
         BotCommand(command="status", description="Статус"),
     ]
     await bot.set_my_commands(commands)
+
+bot = Bot(token=BOT_TOKEN)
+# Сброс вебхука (важно для работы polling)
+await bot.delete_webhook(drop_pending_updates=True)
 
 async def main():
     await init_db()

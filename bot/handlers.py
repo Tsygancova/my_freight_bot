@@ -42,6 +42,15 @@ def get_main_menu():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
+def get_main_menu():
+    buttons = [
+        # ... существующие кнопки ...
+        [InlineKeyboardButton(text="⏸️ Пауза", callback_data="menu_pause")],
+        [InlineKeyboardButton(text="▶️ Возобновить", callback_data="menu_resume")],
+        # ...
+    ]
+    # ...
+
 # ---------- /start ----------
 @router.message(Command("start"))
 async def cmd_start(message: Message):
@@ -82,6 +91,10 @@ async def process_menu_callback(callback: types.CallbackQuery, state: FSMContext
         await cmd_tutorial(callback.message)
     elif action == "status":
         await cmd_status(callback.message)
+    elif action == "pause":
+        await cmd_pause(callback.message)
+    elif action == "resume":
+        await cmd_resume(callback.message)
 
 # ---------- /set_filter (пошагово) ----------
 @router.message(Command("set_filter"))
@@ -576,3 +589,23 @@ async def callback_fav_del(callback: CallbackQuery):
         await callback.message.edit_text(callback.message.text + "\n\n❌ Удалено", reply_markup=None)
     else:
         await callback.answer("⏳ Не найдено", show_alert=False)
+
+@router.message(Command("pause"))
+async def cmd_pause(message: Message):
+    user_id = message.from_user.id
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if user:
+            user.paused = True
+            await session.commit()
+    await message.answer("⏸️ Уведомления о заказах приостановлены. Фильтры сохранены.\nЧтобы возобновить, используй /resume.")
+
+@router.message(Command("resume"))
+async def cmd_resume(message: Message):
+    user_id = message.from_user.id
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if user:
+            user.paused = False
+            await session.commit()
+    await message.answer("▶️ Уведомления о заказах возобновлены.")

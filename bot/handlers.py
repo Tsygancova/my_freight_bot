@@ -419,18 +419,25 @@ async def cmd_favorites(message: Message):
             stmt = select(Order).where(Order.id == f.order_id, Order.platform == f.platform, Order.user_id == user_id)
             res = await session.execute(stmt)
             o = res.scalar_one_or_none()
-            if o: orders.append(o)
+            if o: 
+                orders.append((o, f.platform, f.order_id))  # сохраняем платформу и ID для удаления
     
     if not orders:
         await message.answer("⭐ Избранные заказы не найдены (возможно, удалены).")
         return
     
-    lines = ["⭐ **Избранное:**"]
-    for idx, o in enumerate(orders[:10], 1):
-        lines.append(f"{idx}. {o.origin_city} → {o.dest_city}  |  {o.weight_kg} кг  |  {o.price_eur} €  |  ID: {o.id}")
+    # Отправляем каждый заказ отдельно с кнопкой "Удалить"
+    for order, platform, order_id in orders[:10]:  # ограничим 10 для краткости
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Удалить из избранного", callback_data=f"fav_del_{platform}_{order_id}")]
+        ])
+        text = (f"⭐ {order.origin_city} → {order.dest_city}\n"
+                f"⚖️ {order.weight_kg} кг | 💰 {order.price_eur} €\n"
+                f"🆔 ID: {order_id}")
+        await message.answer(text, reply_markup=keyboard)
+    
     if len(orders) > 10:
-        lines.append(f"... и ещё {len(orders)-10}.")
-    await message.answer("\n".join(lines), parse_mode="Markdown")
+        await message.answer(f"... и ещё {len(orders)-10} заказов в избранном. Используйте /favorites для просмотра всех.")
 
 # ---------- /favorite <id> ----------
 @router.message(Command("favorite"))
@@ -553,3 +560,19 @@ async def cmd_cancel(message: Message, state: FSMContext):
     else:
         await state.clear()
         await message.answer("❌ Настройка отменена.", reply_markup=ReplyKeyboardRemove())
+
+@router.callback_query(lambda c: c.data.startswith("fav_del_"))
+async def callback_fav_del(callback: CallbackQuery):
+    data = callback.data.replace("fav_del_", "").split("_", 1)
+    if len(data) != 2:
+        await callback.answer("Ошибка", show_alert=True)
+        return
+    platform, order_id = data[0], data[1]
+    user_id = callback.from_user.id
+    removed = await remove_favorite(user_id, order_id, platform)
+    if removed:
+        await callback.answer("⭐ Удалено из избранного!", show_alert=False)
+        # Обновим сообщение, чтобы убрать кнопку (можно удалить или изменить текст)
+        await callback.message.edit_text(callback.message.text + "\n\n❌ Удалено", reply_markup=None)
+    else:
+        await callback.answer("⏳ Не найдено", show_alert=False)

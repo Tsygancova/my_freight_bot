@@ -49,13 +49,14 @@ async def fetch_orders_for_user(user_id: int, user_filter: dict, bot):
                     pallets_text = f"{order.get('pallets', 'н/д')} палл."
                     
                     text = (f"🔔 Новый заказ!\n"
-                            f"📦 {order['origin_city']} → {order['dest_city']}\n"
-                            f"⚖️ Вес: {order['weight_kg']} кг"
-                            f"{f' (объёмный: {volume_weight} кг, оплачиваемый: {chargeable} кг)' if volume_weight else ''}\n"
-                            f"📦 Паллет: {pallets_text}\n"
-                            f"💰 {order['price_eur']} €\n"
-                            f"🏷️ Платформа: {order['platform']}"
-                            f"{adr_text}")
+                        f"📦 {order['origin_city']} → {order['dest_city']}\n"
+                        f"⚖️ Вес: {order['weight_kg']} кг"
+                        f"{f' (объёмный: {volume_weight} кг, оплачиваемый: {chargeable} кг)' if volume_weight else ''}\n"
+                        f"📦 Паллет: {pallets_text}\n"
+                        f"💰 {order['price_eur']} €\n"
+                        f"🆔 ID: {order['id']}\n"   # <-- ЭТА СТРОЧКА
+                        f"🏷️ Платформа: {order['platform']}"
+                        f"{adr_text}")
                     await bot.send_message(user_id, text, reply_markup=keyboard)
         except Exception as e:
             logger.error(f"Error fetching from {platform_cfg['name']}: {e}")

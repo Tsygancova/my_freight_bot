@@ -33,7 +33,10 @@ skip_kb = ReplyKeyboardMarkup(
     one_time_keyboard=True
 )
 
-# ---- Главное меню ----
+# ============================================================
+# ГЛАВНОЕ МЕНЮ И ПОДМЕНЮ
+# ============================================================
+
 def get_main_menu():
     """Главное меню (категории)"""
     buttons = [
@@ -44,7 +47,7 @@ def get_main_menu():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-    def get_filters_menu():
+def get_filters_menu():
     """Подменю: Настройки фильтров"""
     buttons = [
         [InlineKeyboardButton(text="🔧 Настроить фильтры", callback_data="menu_set_filter")],
@@ -84,7 +87,10 @@ def get_help_menu():
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-# ---- /start ----
+# ============================================================
+# ОБРАБОТЧИК КОМАНДЫ /start
+# ============================================================
+
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -95,12 +101,15 @@ async def cmd_start(message: Message):
             await session.commit()
     await message.answer(
         "🚚 Привет! Я бот для поиска заказов на Fiat Doblò.\n"
-        "Используй меню ниже или команды.\n"
-        "Напиши /help для списка команд или /tutorial для обучения.",
+        "Используй меню ниже для навигации.\n"
+        "Также доступны команды: /help, /tutorial, /status",
         reply_markup=get_main_menu()
     )
 
-# ---- Обработчики меню ----
+# ============================================================
+# ОБРАБОТЧИКИ КНОПОК МЕНЮ (callback)
+# ============================================================
+
 @router.callback_query(lambda c: c.data.startswith("menu_"))
 async def process_menu_callback(callback: types.CallbackQuery, state: FSMContext):
     action = callback.data.replace("menu_", "")
@@ -118,7 +127,7 @@ async def process_menu_callback(callback: types.CallbackQuery, state: FSMContext
     elif action == "back_main":
         await callback.message.edit_text("🚚 Главное меню", reply_markup=get_main_menu(), parse_mode="Markdown")
     
-    # ----- Действия из подменю (все остальные) -----
+    # ----- Действия из подменю -----
     elif action == "set_filter":
         await cmd_set_filter(callback.message, state)
     elif action == "view_filter":

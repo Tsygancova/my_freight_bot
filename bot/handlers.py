@@ -3,15 +3,19 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import Message, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from database import async_session, User, UserFilter, get_orders_for_user, add_favorite, remove_favorite, get_favorites, Order
-from database import accept_order, get_favorites, add_favorite, remove_favorite, Order
 from sqlalchemy import select, func
+from datetime import datetime
 import re
 
+from database import (
+    async_session, User, UserFilter, Order, Favorite, AcceptedOrder,
+    get_orders_for_user, add_favorite, remove_favorite, get_favorites, accept_order
+)
+from filters import match_filter
 
 router = Router()
 
-# Состояния для фильтров
+# ---- Состояния для фильтров ----
 class FilterForm(StatesGroup):
     origin_countries = State()
     dest_countries = State()
@@ -19,7 +23,7 @@ class FilterForm(StatesGroup):
     max_pallets = State()
     min_price = State()
 
-# Клавиатура для пропуска
+# ---- Клавиатура для пропуска ----
 skip_kb = ReplyKeyboardMarkup(
     keyboard=[
         [KeyboardButton(text="⏩ Пропустить")],
@@ -29,7 +33,7 @@ skip_kb = ReplyKeyboardMarkup(
     one_time_keyboard=True
 )
 
-# ---------- Главное меню ----------
+# ---- Главное меню ----
 def get_main_menu():
     buttons = [
         [InlineKeyboardButton(text="🔧 Настроить фильтры", callback_data="menu_set_filter")],
@@ -41,19 +45,12 @@ def get_main_menu():
         [InlineKeyboardButton(text="📖 Помощь", callback_data="menu_help")],
         [InlineKeyboardButton(text="📚 Обучение", callback_data="menu_tutorial")],
         [InlineKeyboardButton(text="📡 Статус", callback_data="menu_status")],
+        [InlineKeyboardButton(text="⏸️ Пауза", callback_data="menu_pause")],
+        [InlineKeyboardButton(text="▶️ Возобновить", callback_data="menu_resume")],
     ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
-def get_main_menu():
-    buttons = [
-        # ... существующие кнопки ...
-        [InlineKeyboardButton(text="⏸️ Пауза", callback_data="menu_pause")],
-        [InlineKeyboardButton(text="▶️ Возобновить", callback_data="menu_resume")],
-        # ...
-    ]
-    # ...
-
-# ---------- /start ----------
+# ---- /start ----
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -63,13 +60,13 @@ async def cmd_start(message: Message):
             session.add(User(id=user_id))
             await session.commit()
     await message.answer(
-        "🚚 Привет! Я бот для поиска заказов для мистера котички.\n"
+        "🚚 Привет! Я бот для поиска заказов на Fiat Doblò.\n"
         "Используй меню ниже или команды.\n"
         "Напиши /help для списка команд или /tutorial для обучения.",
         reply_markup=get_main_menu()
     )
 
-# ---------- Обработчики меню ----------
+# ---- Обработчики меню ----
 @router.callback_query(lambda c: c.data.startswith("menu_"))
 async def process_menu_callback(callback: types.CallbackQuery, state: FSMContext):
     action = callback.data.replace("menu_", "")
@@ -98,7 +95,7 @@ async def process_menu_callback(callback: types.CallbackQuery, state: FSMContext
     elif action == "resume":
         await cmd_resume(callback.message)
 
-# ---------- /set_filter (пошагово) ----------
+# ---- /set_filter (пошагово) ----
 @router.message(Command("set_filter"))
 async def cmd_set_filter(message: Message, state: FSMContext):
     await state.clear()
@@ -206,35 +203,6 @@ async def process_max_weight(message: Message, state: FSMContext):
     await message.answer("✅ Сохранено.", reply_markup=ReplyKeyboardRemove())
     await ask_max_pallets(message, state)
 
-@router.callback_query(lambda c: c.data.startswith("take_"))
-async def callback_take_order(callback: CallbackQuery):
-    data = callback.data.replace("take_", "").split("_", 1)
-    if len(data) != 2:
-        await callback.answer("Ошибка", show_alert=True)
-        return
-    platform, order_id = data[0], data[1]
-    user_id = callback.from_user.id
-    
-    # Проверяем, не принят ли уже этот заказ
-    async with async_session() as session:
-        stmt = select(AcceptedOrder).where(
-            AcceptedOrder.user_id == user_id,
-            AcceptedOrder.order_id == order_id,
-            AcceptedOrder.platform == platform
-        )
-        result = await session.execute(stmt)
-        if result.scalar_one_or_none():
-            await callback.answer("⚠️ Заказ уже принят ранее.", show_alert=True)
-            return
-    
-    # Принимаем заказ
-    await accept_order(user_id, order_id, platform)
-    await callback.answer("✅ Заказ принят!", show_alert=False)
-    # Удаляем кнопки из сообщения, чтобы не нажимали повторно
-    await callback.message.edit_reply_markup(reply_markup=None)
-    # Можно добавить текст "Принято" в само сообщение
-    await callback.message.edit_text(callback.message.text + "\n\n✅ **Принято!**")
-
 async def ask_max_pallets(message: Message, state: FSMContext):
     await message.answer(
         "Введите **максимальное количество паллет** (европаллеты 800×1200 мм, например, 3).\n"
@@ -338,7 +306,7 @@ async def save_filter(message: Message, state: FSMContext):
     )
     await state.clear()
 
-# ---------- /view_filter ----------
+# ---- /view_filter ----
 @router.message(Command("view_filter"))
 async def cmd_view_filter(message: Message):
     user_id = message.from_user.id
@@ -360,7 +328,7 @@ async def cmd_view_filter(message: Message):
         else:
             await message.answer("📋 Фильтр не задан. Используй /set_filter.")
 
-# ---------- /reset_filter ----------
+# ---- /reset_filter ----
 @router.message(Command("reset_filter"))
 async def cmd_reset_filter(message: Message):
     user_id = message.from_user.id
@@ -375,7 +343,28 @@ async def cmd_reset_filter(message: Message):
         else:
             await message.answer("📋 Фильтр и так не задан.")
 
-# ---------- /history ----------
+# ---- /pause и /resume ----
+@router.message(Command("pause"))
+async def cmd_pause(message: Message):
+    user_id = message.from_user.id
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if user:
+            user.paused = True
+            await session.commit()
+    await message.answer("⏸️ Уведомления о заказах приостановлены. Фильтры сохранены.\nЧтобы возобновить, используй /resume.")
+
+@router.message(Command("resume"))
+async def cmd_resume(message: Message):
+    user_id = message.from_user.id
+    async with async_session() as session:
+        user = await session.get(User, user_id)
+        if user:
+            user.paused = False
+            await session.commit()
+    await message.answer("▶️ Уведомления о заказах возобновлены.")
+
+# ---- /history ----
 @router.message(Command("history"))
 async def cmd_history(message: Message):
     user_id = message.from_user.id
@@ -418,7 +407,7 @@ async def cmd_history(message: Message):
         lines.append(f"... и ещё {len(filtered)-10}.")
     await message.answer("\n".join(lines), parse_mode="Markdown")
 
-# ---------- /stats ----------
+# ---- /stats ----
 @router.message(Command("stats"))
 async def cmd_stats(message: Message):
     user_id = message.from_user.id
@@ -448,7 +437,7 @@ async def cmd_stats(message: Message):
         )
         await message.answer(text, parse_mode="Markdown")
 
-# ---------- /favorites ----------
+# ---- /favorites ----
 @router.message(Command("favorites"))
 async def cmd_favorites(message: Message):
     user_id = message.from_user.id
@@ -457,46 +446,56 @@ async def cmd_favorites(message: Message):
         await message.answer("⭐ У вас нет избранных заказов.")
         return
     
+    # Удаляем просроченные заказы из избранного
+    now = datetime.utcnow()
+    async with async_session() as session:
+        for fav in favs:
+            stmt = select(Order).where(
+                Order.id == fav.order_id,
+                Order.platform == fav.platform,
+                Order.user_id == user_id
+            )
+            result = await session.execute(stmt)
+            order = result.scalar_one_or_none()
+            if order and order.deadline and order.deadline < now:
+                await remove_favorite(user_id, order.id, order.platform)
+        # Обновляем список
+        favs = await get_favorites(user_id)
+        if not favs:
+            await message.answer("⭐ Все избранные заказы устарели и были удалены.")
+            return
+    
     orders = []
     async with async_session() as session:
         for f in favs:
             stmt = select(Order).where(Order.id == f.order_id, Order.platform == f.platform, Order.user_id == user_id)
             res = await session.execute(stmt)
             o = res.scalar_one_or_none()
-            if o: 
-                orders.append((o, f.platform, f.order_id))  # сохраняем платформу и ID для удаления
+            if o:
+                orders.append((o, f.platform, f.order_id))
     
     if not orders:
         await message.answer("⭐ Избранные заказы не найдены (возможно, удалены).")
         return
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(text="✅ Взять заказ", callback_data=f"take_{platform}_{order_id}"),
-        InlineKeyboardButton(text="❌ Удалить", callback_data=f"fav_del_{platform}_{order_id}")
-    ]
-])
-
-# Проверяем, не истёк ли срок доставки
-if order.deadline and order.deadline < datetime.utcnow():
-    # Удаляем из избранного
-    await remove_favorite(user_id, order.id, order.platform)
-    continue  # пропускаем этот заказ
-    
-    # Отправляем каждый заказ отдельно с кнопкой "Удалить"
-    for order, platform, order_id in orders[:10]:  # ограничим 10 для краткости
+    for order, platform, order_id in orders[:10]:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="❌ Удалить из избранного", callback_data=f"fav_del_{platform}_{order_id}")]
+            [
+                InlineKeyboardButton(text="✅ Взять заказ", callback_data=f"take_{platform}_{order_id}"),
+                InlineKeyboardButton(text="❌ Удалить", callback_data=f"fav_del_{platform}_{order_id}")
+            ]
         ])
+        deadline_text = order.deadline.strftime('%d.%m.%Y %H:%M') if order.deadline else 'не указана'
         text = (f"⭐ {order.origin_city} → {order.dest_city}\n"
                 f"⚖️ {order.weight_kg} кг | 💰 {order.price_eur} €\n"
-                f"🆔 ID: {order_id}")
+                f"🆔 ID: {order_id}\n"
+                f"⏳ Доставка до: {deadline_text}")
         await message.answer(text, reply_markup=keyboard)
     
     if len(orders) > 10:
-        await message.answer(f"... и ещё {len(orders)-10} заказов в избранном. Используйте /favorites для просмотра всех.")
+        await message.answer(f"... и ещё {len(orders)-10} заказов в избранном.")
 
-# ---------- /favorite <id> ----------
+# ---- /favorite <id> ----
 @router.message(Command("favorite"))
 async def cmd_favorite(message: Message):
     args = message.text.split(maxsplit=1)
@@ -518,7 +517,7 @@ async def cmd_favorite(message: Message):
         else:
             await message.answer(f"⭐ Заказ {order_id} уже в избранном.")
 
-# ---------- /unfavorite <id> ----------
+# ---- /unfavorite <id> ----
 @router.message(Command("unfavorite"))
 async def cmd_unfavorite(message: Message):
     args = message.text.split(maxsplit=1)
@@ -540,22 +539,67 @@ async def cmd_unfavorite(message: Message):
         else:
             await message.answer(f"⭐ Заказ {order_id} не был в избранном.")
 
-# ---------- Обработчик кнопки "В избранное" ----------
-@router.callback_query(lambda c: c.data.startswith("fav_add_"))
-async def callback_fav_add(callback: CallbackQuery):
-    data = callback.data.replace("fav_add_", "").split("_", 1)
+# ---- /accepted ----
+@router.message(Command("accepted"))
+async def cmd_accepted(message: Message):
+    user_id = message.from_user.id
+    async with async_session() as session:
+        stmt = select(AcceptedOrder).where(AcceptedOrder.user_id == user_id).order_by(AcceptedOrder.accepted_at.desc())
+        result = await session.execute(stmt)
+        accepted = result.scalars().all()
+    if not accepted:
+        await message.answer("📋 У вас нет принятых заказов.")
+        return
+    lines = ["📋 **Принятые заказы:**"]
+    for idx, a in enumerate(accepted[:10], 1):
+        lines.append(f"{idx}. Заказ {a.order_id} (платформа: {a.platform}) – принят {a.accepted_at.strftime('%d.%m.%Y %H:%M')}")
+    if len(accepted) > 10:
+        lines.append(f"... и ещё {len(accepted)-10}.")
+    await message.answer("\n".join(lines), parse_mode="Markdown")
+
+# ---- Обработчики callback для кнопок ----
+@router.callback_query(lambda c: c.data.startswith("take_"))
+async def callback_take_order(callback: CallbackQuery):
+    data = callback.data.replace("take_", "").split("_", 1)
     if len(data) != 2:
         await callback.answer("Ошибка", show_alert=True)
         return
     platform, order_id = data[0], data[1]
     user_id = callback.from_user.id
-    added = await add_favorite(user_id, order_id, platform)
-    if added:
-        await callback.answer("⭐ Добавлено в избранное!", show_alert=False)
-    else:
-        await callback.answer("⏳ Уже в избранном", show_alert=False)
+    
+    # Проверяем, не принят ли уже
+    async with async_session() as session:
+        stmt = select(AcceptedOrder).where(
+            AcceptedOrder.user_id == user_id,
+            AcceptedOrder.order_id == order_id,
+            AcceptedOrder.platform == platform
+        )
+        result = await session.execute(stmt)
+        if result.scalar_one_or_none():
+            await callback.answer("⚠️ Заказ уже принят ранее.", show_alert=True)
+            return
+    
+    await accept_order(user_id, order_id, platform)
+    await callback.answer("✅ Заказ принят!", show_alert=False)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.edit_text(callback.message.text + "\n\n✅ **Принято!**")
 
-# ---------- /help ----------
+@router.callback_query(lambda c: c.data.startswith("fav_del_"))
+async def callback_fav_del(callback: CallbackQuery):
+    data = callback.data.replace("fav_del_", "").split("_", 1)
+    if len(data) != 2:
+        await callback.answer("Ошибка", show_alert=True)
+        return
+    platform, order_id = data[0], data[1]
+    user_id = callback.from_user.id
+    removed = await remove_favorite(user_id, order_id, platform)
+    if removed:
+        await callback.answer("⭐ Удалено из избранного!", show_alert=False)
+        await callback.message.edit_text(callback.message.text + "\n\n❌ Удалено", reply_markup=None)
+    else:
+        await callback.answer("⏳ Не найдено", show_alert=False)
+
+# ---- /help ----
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     text = (
@@ -569,6 +613,9 @@ async def cmd_help(message: Message):
         "/favorites – показать избранные заказы\n"
         "/favorite <ID> – добавить заказ в избранное по ID\n"
         "/unfavorite <ID> – удалить заказ из избранного\n"
+        "/accepted – принятые заказы\n"
+        "/pause – приостановить уведомления\n"
+        "/resume – возобновить уведомления\n"
         "/status – статус бота\n"
         "/help – эта справка\n"
         "/tutorial – подробное обучение\n"
@@ -576,7 +623,7 @@ async def cmd_help(message: Message):
     )
     await message.answer(text, parse_mode="Markdown")
 
-# ---------- /tutorial (обучение) ----------
+# ---- /tutorial ----
 @router.message(Command("tutorial"))
 async def cmd_tutorial(message: Message):
     text = (
@@ -586,29 +633,33 @@ async def cmd_tutorial(message: Message):
         "   → Все параметры можно пропустить.\n\n"
         "2. **Получение заказов**\n"
         "   → Бот автоматически проверяет заказы каждую минуту.\n"
-        "   → Подходящие заказы приходят с кнопками «Карта» и «В избранное».\n\n"
+        "   → Подходящие заказы приходят с кнопками «Карта», «В избранное» и «Взять заказ».\n\n"
         "3. **Избранное** (`/favorites`)\n"
         "   → Сохраняй интересные заказы, чтобы вернуться к ним позже.\n"
-        "   → Удалить можно через `/unfavorite <ID>`.\n\n"
-        "4. **История** (`/history [дни]`)\n"
+        "   → В избранном есть кнопка «Взять заказ» и «Удалить».\n\n"
+        "4. **Принятие заказов**\n"
+        "   → Кнопка «Взять заказ» – заказ сохраняется в принятые и удаляется из избранного.\n\n"
+        "5. **История** (`/history [дни]`)\n"
         "   → Показывает все заказы за указанное количество дней (по умолчанию 2).\n\n"
-        "5. **Статистика** (`/stats`)\n"
+        "6. **Статистика** (`/stats`)\n"
         "   → Показывает общее количество заказов, среднюю цену и топ-3 маршрута.\n\n"
-        "6. **Подсказка по кодам стран**\n"
+        "7. **Пауза** (`/pause`) и **Возобновить** (`/resume`)\n"
+        "   → Останавливают и возобновляют уведомления без сброса фильтров.\n\n"
+        "8. **Подсказка по кодам стран**\n"
         "   → NL – Нидерланды, BE – Бельгия, DE – Германия, FR – Франция,\n"
         "   → UK – Великобритания, IT – Италия, ES – Испания, PL – Польша, CZ – Чехия.\n\n"
-        "7. **Важно**\n"
+        "9. **Важно**\n"
         "   → Бот работает 24/7. Ты можешь закрыть Telegram – уведомления всё равно придут.\n"
         "   → Если что-то не работает, проверь фильтры командой `/view_filter`."
     )
     await message.answer(text, parse_mode="Markdown")
 
-# ---------- /status ----------
+# ---- /status ----
 @router.message(Command("status"))
 async def cmd_status(message: Message):
     await message.answer("✅ Бот активен. Сбор заказов происходит каждую минуту.")
 
-# ---------- /cancel ----------
+# ---- /cancel ----
 @router.message(Command("cancel"))
 async def cmd_cancel(message: Message, state: FSMContext):
     current_state = await state.get_state()
@@ -617,39 +668,3 @@ async def cmd_cancel(message: Message, state: FSMContext):
     else:
         await state.clear()
         await message.answer("❌ Настройка отменена.", reply_markup=ReplyKeyboardRemove())
-
-@router.callback_query(lambda c: c.data.startswith("fav_del_"))
-async def callback_fav_del(callback: CallbackQuery):
-    data = callback.data.replace("fav_del_", "").split("_", 1)
-    if len(data) != 2:
-        await callback.answer("Ошибка", show_alert=True)
-        return
-    platform, order_id = data[0], data[1]
-    user_id = callback.from_user.id
-    removed = await remove_favorite(user_id, order_id, platform)
-    if removed:
-        await callback.answer("⭐ Удалено из избранного!", show_alert=False)
-        # Обновим сообщение, чтобы убрать кнопку (можно удалить или изменить текст)
-        await callback.message.edit_text(callback.message.text + "\n\n❌ Удалено", reply_markup=None)
-    else:
-        await callback.answer("⏳ Не найдено", show_alert=False)
-
-@router.message(Command("pause"))
-async def cmd_pause(message: Message):
-    user_id = message.from_user.id
-    async with async_session() as session:
-        user = await session.get(User, user_id)
-        if user:
-            user.paused = True
-            await session.commit()
-    await message.answer("⏸️ Уведомления о заказах приостановлены. Фильтры сохранены.\nЧтобы возобновить, используй /resume.")
-
-@router.message(Command("resume"))
-async def cmd_resume(message: Message):
-    user_id = message.from_user.id
-    async with async_session() as session:
-        user = await session.get(User, user_id)
-        if user:
-            user.paused = False
-            await session.commit()
-    await message.answer("▶️ Уведомления о заказах возобновлены.")
